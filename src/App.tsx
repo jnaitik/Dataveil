@@ -4,6 +4,10 @@ import { getUserPreferences, saveUserPreferences, type UserPreferences } from '.
 import { StatusPanel } from './components/StatusPanel';
 import { UnderTheHood, type InferenceLogEntry } from './components/UnderTheHood';
 import { GateTestHarness } from './features/gate/GateTestHarness';
+import { DropZone } from './components/DropZone';
+import { ProfileDashboard } from './features/profile/ProfileDashboard';
+import { parseAndProfileCsv } from './csv/parserClient';
+import type { DatasetProfile } from './csv/profiler';
 
 export default function App() {
   const { user } = useAnonymousAuth();
@@ -13,6 +17,11 @@ export default function App() {
     requestCountsBySource: { onDevice: 0, cloud: 0 },
   });
   const [lastLog, setLastLog] = useState<InferenceLogEntry | null>(null);
+
+  // Profile and CSV State
+  const [profile, setProfile] = useState<DatasetProfile | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'profile' | 'gate'>('profile');
 
   useEffect(() => {
     getUserPreferences(user?.uid).then((p) => {
@@ -25,6 +34,19 @@ export default function App() {
     const updated = { ...prefs, preferredMode: nextMode as 'private' | 'auto' };
     setPrefs(updated);
     saveUserPreferences(user?.uid, { preferredMode: nextMode });
+  };
+
+  const handleLoadCsv = async (csvContent: string, fileName: string, fileSizeBytes: number) => {
+    setIsParsing(true);
+    try {
+      const result = await parseAndProfileCsv(csvContent, fileName, fileSizeBytes);
+      setProfile(result);
+      setActiveTab('profile');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error profiling CSV.');
+    } finally {
+      setIsParsing(false);
+    }
   };
 
   return (
@@ -46,31 +68,82 @@ export default function App() {
       </header>
 
       {/* Main Container */}
-      <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center space-y-6">
-        <div className="max-w-2xl space-y-2">
-          <div className="inline-block px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-semibold tracking-wide uppercase">
-            Phase 4 • Hybrid AI Verification Gate
+      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col items-center space-y-6">
+        {/* Navigation Tabs */}
+        <div className="w-full flex items-center justify-between border-b border-slate-200 pb-3">
+          <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('profile')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                activeTab === 'profile'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              📊 Profile Module (Zero AI)
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('gate')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                activeTab === 'gate'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              🔒 Hybrid AI Verification Gate
+            </button>
           </div>
-          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
-            On-Device First. Consent-Gated Cloud Fallback.
-          </h2>
-          <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-            Dataveil guarantees your raw rows stay on your device. Test the hybrid AI execution gate below:
-            see on-device inference run strictly locally, experience the consent card when local execution is unavailable,
-            and inspect real SDK latency and provenance.
-          </p>
+
+          <span className="text-[11px] font-mono text-slate-500 hidden sm:inline">
+            Phase 5 • Deterministic Core
+          </span>
         </div>
 
-        {/* Gate Test Harness */}
-        <GateTestHarness preferredMode={prefs.preferredMode} onLogUpdate={setLastLog} />
+        {/* Tab 1: Profile Module (Zero AI) */}
+        {activeTab === 'profile' && (
+          <div className="w-full space-y-6">
+            {!profile ? (
+              <div className="max-w-2xl mx-auto space-y-4">
+                <div className="text-center space-y-2">
+                  <h2 className="text-2xl font-extrabold tracking-tight text-slate-900">
+                    Local CSV Profile & Analysis
+                  </h2>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Upload your CSV or click any sample dataset. Inferred data types, outlier detection (IQR), 
+                    missing values, duplicate counts, and default charts are computed 100% locally in a Web Worker with zero AI.
+                  </p>
+                </div>
+                <DropZone onLoadCsv={handleLoadCsv} isLoading={isParsing} />
+              </div>
+            ) : (
+              <ProfileDashboard profile={profile} onReset={() => setProfile(null)} />
+            )}
+          </div>
+        )}
 
-        {/* Under the Hood Drawer */}
-        <UnderTheHood lastLog={lastLog} />
+        {/* Tab 2: Hybrid AI Verification Gate */}
+        {activeTab === 'gate' && (
+          <div className="w-full flex flex-col items-center space-y-6">
+            <div className="max-w-2xl text-center space-y-2">
+              <h2 className="text-2xl font-extrabold tracking-tight text-slate-900">
+                Hybrid AI Gate & Consent Inspector
+              </h2>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Verify strict on-device execution with Gemini Nano, inspect the one-time consent card,
+                and review real SDK provenance and latency.
+              </p>
+            </div>
+            <GateTestHarness preferredMode={prefs.preferredMode} onLogUpdate={setLastLog} />
+            <UnderTheHood lastLog={lastLog} />
+          </div>
+        )}
       </main>
 
       {/* Footer */}
       <footer className="border-t border-slate-200 bg-white py-3 px-6 text-center text-xs text-slate-500">
-        Dataveil — Firebase AI Logic Hybrid Inference Hackathon Project • Phase 4 Gate Ready
+        Dataveil — Firebase AI Logic Hybrid Inference Hackathon Project • Phase 5 Deterministic Profile Complete
       </footer>
     </div>
   );
