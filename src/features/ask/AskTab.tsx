@@ -94,7 +94,8 @@ OUTPUT FORMAT: Return ONLY the JSON object. No explanation.`;
       });
 
       if (!model) {
-        // Fallback demo operation
+        const latency = Math.round(performance.now() - startTime);
+        const demoSource: InferenceSource = decision.mode === InferenceMode.ONLY_ON_DEVICE ? 'ON_DEVICE' : 'IN_CLOUD';
         const numCol = profile.columns.find((c) => c.type === 'number')?.name;
         const demoOp: QueryOperation = numCol
           ? { type: 'sum', targetColumn: numCol }
@@ -103,7 +104,15 @@ OUTPUT FORMAT: Return ONLY the JSON object. No explanation.`;
         const execRes = executeOperation(demoOp, profile, profile.previewRows);
         setMappedOp(demoOp);
         setOperationResult(execRes);
-        setSource(decision.mode === InferenceMode.ONLY_ON_DEVICE ? 'ON_DEVICE' : 'IN_CLOUD');
+        setSource(demoSource);
+
+        onLogUpdate({
+          modeRequested: decision.mode,
+          sourceReturned: demoSource,
+          latencyMs: latency,
+          payloadChars: prompt.length,
+          timestamp: new Date().toLocaleTimeString(),
+        });
         setIsLoading(false);
         return;
       }
