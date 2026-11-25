@@ -9,7 +9,7 @@ describe('Phase 5 Profile UI In-Browser Simulation Test', () => {
     // 1. Verify App Header and Status Panel
     expect(screen.getByText('Dataveil')).toBeInTheDocument();
     expect(screen.getByText('Private CSV Explainer')).toBeInTheDocument();
-    expect(screen.getByText('📊 Profile Module (Zero AI)')).toBeInTheDocument();
+    expect(screen.getByText('📊 Profile (No AI)')).toBeInTheDocument();
 
     // 2. Click the Monthly Sales sample dataset card
     const sampleBtn = screen.getByText('Monthly Sales Export (Fictional)');
@@ -39,7 +39,7 @@ describe('Phase 5 Profile UI In-Browser Simulation Test', () => {
     expect(screen.getByText('Local Data Preview')).toBeInTheDocument();
 
     // 7. Verify switching tabs to the Hybrid AI Verification Gate
-    const gateTab = screen.getByText('🔒 Hybrid AI Verification Gate');
+    const gateTab = screen.getByText('🔒 Verification Gate');
     fireEvent.click(gateTab);
 
     expect(screen.getByText('Phase 4 Verification Gate')).toBeInTheDocument();

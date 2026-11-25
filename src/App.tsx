@@ -6,8 +6,13 @@ import { UnderTheHood, type InferenceLogEntry } from './components/UnderTheHood'
 import { GateTestHarness } from './features/gate/GateTestHarness';
 import { DropZone } from './components/DropZone';
 import { ProfileDashboard } from './features/profile/ProfileDashboard';
+import { ExplainTab } from './features/explain/ExplainTab';
+import { SuggestedChartsTab } from './features/charts/SuggestedChartsTab';
+import { AskTab } from './features/ask/AskTab';
 import { parseAndProfileCsv } from './csv/parserClient';
 import type { DatasetProfile } from './csv/profiler';
+
+type TabKey = 'profile' | 'explain' | 'charts' | 'ask' | 'gate';
 
 export default function App() {
   const { user } = useAnonymousAuth();
@@ -21,7 +26,7 @@ export default function App() {
   // Profile and CSV State
   const [profile, setProfile] = useState<DatasetProfile | null>(null);
   const [isParsing, setIsParsing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'profile' | 'gate'>('profile');
+  const [activeTab, setActiveTab] = useState<TabKey>('profile');
 
   useEffect(() => {
     getUserPreferences(user?.uid).then((p) => {
@@ -69,35 +74,76 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col items-center space-y-6">
-        {/* Navigation Tabs */}
-        <div className="w-full flex items-center justify-between border-b border-slate-200 pb-3">
-          <div className="flex items-center space-x-2">
+        {/* Navigation Tabs (Accessible once dataset is loaded or for Gate) */}
+        <div className="w-full flex flex-wrap items-center justify-between border-b border-slate-200 pb-3 gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             <button
               type="button"
               onClick={() => setActiveTab('profile')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                 activeTab === 'profile'
                   ? 'bg-slate-900 text-white shadow-xs'
                   : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
               }`}
             >
-              📊 Profile Module (Zero AI)
+              📊 Profile (No AI)
             </button>
+
+            {profile && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('explain')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    activeTab === 'explain'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  💡 Explain Columns (AI)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('charts')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    activeTab === 'charts'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  📈 Suggested Charts (AI)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('ask')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    activeTab === 'ask'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  💬 Ask (AI + Code)
+                </button>
+              </>
+            )}
+
             <button
               type="button"
               onClick={() => setActiveTab('gate')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                 activeTab === 'gate'
                   ? 'bg-slate-900 text-white shadow-xs'
                   : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
               }`}
             >
-              🔒 Hybrid AI Verification Gate
+              🔒 Verification Gate
             </button>
           </div>
 
           <span className="text-[11px] font-mono text-slate-500 hidden sm:inline">
-            Phase 5 • Deterministic Core
+            Phase 6 • All 4 Modules Active
           </span>
         </div>
 
@@ -123,7 +169,34 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 2: Hybrid AI Verification Gate */}
+        {/* Tab 2: Explain Columns (AI) */}
+        {activeTab === 'explain' && profile && (
+          <ExplainTab
+            profile={profile}
+            preferredMode={prefs.preferredMode}
+            onLogUpdate={setLastLog}
+          />
+        )}
+
+        {/* Tab 3: Suggested Charts (AI) */}
+        {activeTab === 'charts' && profile && (
+          <SuggestedChartsTab
+            profile={profile}
+            preferredMode={prefs.preferredMode}
+            onLogUpdate={setLastLog}
+          />
+        )}
+
+        {/* Tab 4: Ask (AI Maps, Code Executes) */}
+        {activeTab === 'ask' && profile && (
+          <AskTab
+            profile={profile}
+            preferredMode={prefs.preferredMode}
+            onLogUpdate={setLastLog}
+          />
+        )}
+
+        {/* Tab 5: Verification Gate */}
         {activeTab === 'gate' && (
           <div className="w-full flex flex-col items-center space-y-6">
             <div className="max-w-2xl text-center space-y-2">
@@ -136,14 +209,16 @@ export default function App() {
               </p>
             </div>
             <GateTestHarness preferredMode={prefs.preferredMode} onLogUpdate={setLastLog} />
-            <UnderTheHood lastLog={lastLog} />
           </div>
         )}
+
+        {/* Persistent Under The Hood Drawer */}
+        <UnderTheHood lastLog={lastLog} />
       </main>
 
       {/* Footer */}
       <footer className="border-t border-slate-200 bg-white py-3 px-6 text-center text-xs text-slate-500">
-        Dataveil — Firebase AI Logic Hybrid Inference Hackathon Project • Phase 5 Deterministic Profile Complete
+        Dataveil — Firebase AI Logic Hybrid Inference Hackathon Project • Phase 6 Complete
       </footer>
     </div>
   );
