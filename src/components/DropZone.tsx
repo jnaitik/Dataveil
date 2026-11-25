@@ -14,10 +14,10 @@ export function DropZone({ onLoadCsv, isLoading = false }: DropZoneProps) {
   const handleFile = (file: File) => {
     setErrorMsg(null);
 
-    // Limit check: 10 MB
-    const MAX_SIZE = 10 * 1024 * 1024;
+    // Limit check: 50 MB
+    const MAX_SIZE = 50 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
-      setErrorMsg(`File exceeds the 10 MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB).`);
+      setErrorMsg(`File exceeds the 50 MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB).`);
       return;
     }
 
@@ -91,7 +91,7 @@ export function DropZone({ onLoadCsv, isLoading = false }: DropZoneProps) {
               {isLoading ? 'Parsing and profiling locally...' : 'Drop your CSV file here, or click to browse'}
             </p>
             <p className="text-xs text-slate-500 mt-1">
-              Parsed 100% in your browser • Up to 10 MB / 50,000 rows • Raw rows never leave your computer
+              Parsed 100% in your browser • Up to 50 MB / 500,000 rows • Raw rows never leave your computer
             </p>
           </div>
         </div>
