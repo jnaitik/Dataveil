@@ -15,8 +15,9 @@ import { OnboardingModal } from './components/OnboardingModal';
 import { DataPrivacyModal } from './components/DataPrivacyModal';
 import { HybridFlowBanner } from './components/HybridFlowBanner';
 import { TestMatrixTab } from './features/matrix/TestMatrixTab';
+import { PrivacyInspectorTab } from './features/privacy/PrivacyInspectorTab';
 
-type TabKey = 'profile' | 'explain' | 'charts' | 'ask' | 'gate' | 'matrix';
+type TabKey = 'profile' | 'explain' | 'charts' | 'ask' | 'privacy' | 'gate' | 'matrix';
 
 export default function App() {
   const { user } = useAnonymousAuth();
@@ -30,6 +31,7 @@ export default function App() {
   // Profile and CSV State
   const [profile, setProfile] = useState<DatasetProfile | null>(null);
   const [isParsing, setIsParsing] = useState(false);
+  const [parseProgress, setParseProgress] = useState<{ rowsProcessed: number; percent: number } | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('profile');
 
   // Modals
@@ -56,16 +58,26 @@ export default function App() {
     saveUserPreferences(user?.uid, { preferredMode: nextMode });
   };
 
-  const handleLoadCsv = async (csvContent: string, fileName: string, fileSizeBytes: number) => {
+  const handleLoadCsv = async (fileOrContent: File | string, fileName: string, fileSizeBytes: number) => {
     setIsParsing(true);
+    setParseProgress(null);
+
     try {
-      const result = await parseAndProfileCsv(csvContent, fileName, fileSizeBytes);
+      const result = await parseAndProfileCsv(
+        fileOrContent,
+        fileName,
+        fileSizeBytes,
+        {
+          onProgress: (p) => setParseProgress(p),
+        }
+      );
       setProfile(result);
       setActiveTab('profile');
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error profiling CSV.');
     } finally {
       setIsParsing(false);
+      setParseProgress(null);
     }
   };
 
@@ -194,6 +206,22 @@ export default function App() {
 
             <button
               role="tab"
+              id="tab-privacy"
+              aria-selected={activeTab === 'privacy'}
+              aria-controls="panel-privacy"
+              type="button"
+              onClick={() => setActiveTab('privacy')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-sky-500 ${
+                activeTab === 'privacy'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              🛡️ Privacy Inspector
+            </button>
+
+            <button
+              role="tab"
               id="tab-gate"
               aria-selected={activeTab === 'gate'}
               aria-controls="panel-gate"
@@ -254,7 +282,12 @@ export default function App() {
                     missing values, duplicate counts, and default charts are computed 100% locally in a Web Worker with zero AI.
                   </p>
                 </div>
-                <DropZone onLoadCsv={handleLoadCsv} isLoading={isParsing} />
+                <DropZone
+                  onLoadCsv={handleLoadCsv}
+                  isLoading={isParsing}
+                  onCancel={() => setIsParsing(false)}
+                  progress={parseProgress}
+                />
               </div>
             ) : (
               <ProfileDashboard profile={profile} onReset={() => setProfile(null)} />
@@ -295,7 +328,17 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 5: Verification Gate */}
+        {/* Tab 5: Dedicated Privacy Inspector */}
+        {activeTab === 'privacy' && (
+          <div id="panel-privacy" role="tabpanel" aria-labelledby="tab-privacy" className="w-full">
+            <PrivacyInspectorTab
+              profile={profile}
+              preferredMode={prefs.preferredMode}
+            />
+          </div>
+        )}
+
+        {/* Tab 6: Verification Gate */}
         {activeTab === 'gate' && (
           <div id="panel-gate" role="tabpanel" aria-labelledby="tab-gate" className="w-full flex flex-col items-center space-y-6">
             <div className="max-w-2xl text-center space-y-2">

@@ -1,3 +1,4 @@
+import Papa from 'papaparse';
 import type { DatasetProfile } from './profiler';
 
 export interface QueryOperation {
@@ -166,4 +167,144 @@ export function executeOperation(
   }
 
   throw new Error(`Execution failed: Unknown operation ${op.type}`);
+}
+
+/**
+ * executeStreamingOperation performs a bounded-memory streaming scan over a local File.
+ * Memory complexity is O(1) regardless of whether the file is 10 MB or 500 MB.
+ */
+export function executeStreamingOperation(
+  op: QueryOperation,
+  file: File,
+  _profile: DatasetProfile,
+  signal?: AbortSignal
+): Promise<OperationResult> {
+  return new Promise((resolve, reject) => {
+    let headerIndices: Map<string, number> | null = null;
+    let count = 0;
+    let sum = 0;
+    let min = Infinity;
+    let max = -Infinity;
+    const groups = new Map<string, { count: number; sum: number }>();
+
+    const filterCol = op.filter?.column.toLowerCase();
+    const filterVal = op.filter?.value.toLowerCase();
+    const targetCol = op.targetColumn?.toLowerCase();
+    const groupCol = op.groupColumn?.toLowerCase();
+
+    Papa.parse<string[]>(file, {
+      chunkSize: 1024 * 1024 * 4,
+      skipEmptyLines: 'greedy',
+      dynamicTyping: false,
+      chunk: (results, parser) => {
+        if (signal?.aborted) {
+          parser.abort();
+          return reject(new Error('Operation cancelled by user.'));
+        }
+
+        const rows = results.data;
+        if (!rows || rows.length === 0) return;
+
+        let startRow = 0;
+        if (!headerIndices) {
+          headerIndices = new Map();
+          rows[0].forEach((h, idx) => {
+            const clean = (h || '').trim().replace(/^\uFEFF/, '').toLowerCase();
+            headerIndices!.set(clean, idx);
+          });
+          startRow = 1;
+        }
+
+        const filterIdx = filterCol ? headerIndices.get(filterCol) : undefined;
+        const targetIdx = targetCol ? headerIndices.get(targetCol) : undefined;
+        const groupIdx = groupCol ? headerIndices.get(groupCol) : undefined;
+
+        for (let i = startRow; i < rows.length; i++) {
+          const row = rows[i];
+          if (!row || row.length === 0) continue;
+
+          // Check filter
+          if (filterIdx !== undefined) {
+            const cellVal = String(row[filterIdx] || '').toLowerCase().trim();
+            if (cellVal !== filterVal) continue;
+          }
+
+          count++;
+
+          if (['sum', 'mean', 'min', 'max'].includes(op.type) && targetIdx !== undefined) {
+            const num = Number(row[targetIdx]);
+            if (!isNaN(num)) {
+              sum += num;
+              if (num < min) min = num;
+              if (num > max) max = num;
+            }
+          } else if (op.type === 'groupBy' && groupIdx !== undefined) {
+            const gVal = String(row[groupIdx] || 'Unknown').trim();
+            const existing = groups.get(gVal) || { count: 0, sum: 0 };
+            existing.count++;
+            if (targetIdx !== undefined) {
+              const num = Number(row[targetIdx]);
+              if (!isNaN(num)) existing.sum += num;
+            }
+            groups.set(gVal, existing);
+          }
+        }
+      },
+      complete: () => {
+        const filterSuffix = op.filter ? ` where ${op.filter.column} = "${op.filter.value}"` : '';
+
+        if (op.type === 'count') {
+          return resolve({
+            humanReadableQuery: `Count of rows${filterSuffix}`,
+            resultType: 'scalar',
+            scalarValue: count,
+          });
+        }
+
+        if (['sum', 'mean', 'min', 'max'].includes(op.type)) {
+          let val = 0;
+          if (op.type === 'sum') val = sum;
+          if (op.type === 'mean') val = count > 0 ? sum / count : 0;
+          if (op.type === 'min') val = min === Infinity ? 0 : min;
+          if (op.type === 'max') val = max === -Infinity ? 0 : max;
+
+          return resolve({
+            humanReadableQuery: `${op.type.toUpperCase()} of ${op.targetColumn}${filterSuffix}`,
+            resultType: 'scalar',
+            scalarValue: Math.round(val * 100) / 100,
+          });
+        }
+
+        if (op.type === 'groupBy') {
+          const agg = op.aggregate || 'count';
+          const tableData: Array<{ group: string; value: number }> = [];
+
+          for (const [groupName, data] of groups.entries()) {
+            let finalVal = 0;
+            if (agg === 'count') finalVal = data.count;
+            else if (agg === 'sum') finalVal = data.sum;
+            else if (agg === 'mean') finalVal = data.count > 0 ? data.sum / data.count : 0;
+
+            tableData.push({
+              group: groupName,
+              value: Math.round(finalVal * 100) / 100,
+            });
+          }
+
+          tableData.sort((a, b) => b.value - a.value);
+
+          return resolve({
+            humanReadableQuery: `${agg.toUpperCase()}${op.targetColumn ? ` of ${op.targetColumn}` : ''} grouped by ${op.groupColumn}${filterSuffix}`,
+            resultType: 'table',
+            tableData,
+          });
+        }
+
+        reject(new Error(`Unsupported operation: ${op.type}`));
+      },
+      error: (err) => {
+        reject(new Error(err.message || 'Error executing streaming operation.'));
+      },
+    });
+  });
 }

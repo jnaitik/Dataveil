@@ -1,16 +1,29 @@
 import Papa from 'papaparse';
-import { profileCsvData, type DatasetProfile } from './profiler';
+import { IncrementalProfiler, type DatasetProfile } from './profiler';
 
-export interface WorkerMessage {
+export interface WorkerParseMessage {
   type: 'PARSE';
-  csvString: string;
+  file?: File;
+  csvString?: string;
   fileName: string;
   fileSizeBytes: number;
 }
 
+export interface WorkerAbortMessage {
+  type: 'ABORT';
+}
+
+export type WorkerIncomingMessage = WorkerParseMessage | WorkerAbortMessage;
+
 export interface WorkerSuccessResult {
   type: 'SUCCESS';
   profile: DatasetProfile;
+}
+
+export interface WorkerProgressResult {
+  type: 'PROGRESS';
+  rowsProcessed: number;
+  percent: number;
 }
 
 export interface WorkerErrorResult {
@@ -18,35 +31,100 @@ export interface WorkerErrorResult {
   error: string;
 }
 
-self.onmessage = (e: MessageEvent<WorkerMessage>) => {
+export type WorkerOutgoingMessage = WorkerSuccessResult | WorkerProgressResult | WorkerErrorResult;
+
+let activeParser: { abort: () => void } | null = null;
+
+self.onmessage = (e: MessageEvent<WorkerIncomingMessage>) => {
+  if (e.data.type === 'ABORT') {
+    if (activeParser) {
+      activeParser.abort();
+      activeParser = null;
+    }
+    return;
+  }
+
   if (e.data.type === 'PARSE') {
-    const { csvString, fileName, fileSizeBytes } = e.data;
+    const { file, csvString, fileName, fileSizeBytes } = e.data;
+    const input: File | string | undefined = file || csvString;
+
+    if (!input) {
+      self.postMessage({ type: 'ERROR', error: 'No CSV file or data provided.' } as WorkerErrorResult);
+      return;
+    }
+
+    const profiler = new IncrementalProfiler(fileName, fileSizeBytes);
+    let totalRowsProcessed = 0;
+    let lastProgressReportTime = 0;
 
     try {
-      // Strip UTF-8 BOM if present
-      const cleanCsv = csvString.replace(/^\uFEFF/, '');
-
-      const parsed = Papa.parse<string[]>(cleanCsv, {
-        header: false,
+      Papa.parse<string[]>(input as any, {
+        chunkSize: 1024 * 1024 * 4, // 4 MB chunks for optimal streaming
         skipEmptyLines: 'greedy',
         dynamicTyping: false,
+        chunk: (results, parser) => {
+          activeParser = parser;
+
+          if (results.meta?.delimiter) {
+            profiler.setDelimiter(results.meta.delimiter);
+          }
+
+          if (results.errors && results.errors.length > 0) {
+            // Log non-fatal row warnings if needed
+          }
+
+          if (results.data && results.data.length > 0) {
+            profiler.addRows(results.data);
+            totalRowsProcessed += results.data.length;
+
+            const now = performance.now();
+            if (now - lastProgressReportTime > 80) {
+              lastProgressReportTime = now;
+              // Estimate percentage based on processed rows/bytes if file
+              const estPercent = fileSizeBytes > 0
+                ? Math.min(99, Math.round((totalRowsProcessed * 120 / fileSizeBytes) * 100))
+                : 50;
+
+              self.postMessage({
+                type: 'PROGRESS',
+                rowsProcessed: totalRowsProcessed,
+                percent: Math.max(1, estPercent),
+              } as WorkerProgressResult);
+            }
+          }
+        },
+        complete: () => {
+          activeParser = null;
+          try {
+            const profile = profiler.finalize();
+            if (profile.columnCount === 0) {
+              self.postMessage({
+                type: 'ERROR',
+                error: 'The provided CSV contains no valid columns or records.',
+              } as WorkerErrorResult);
+              return;
+            }
+            self.postMessage({ type: 'SUCCESS', profile } as WorkerSuccessResult);
+          } catch (finErr) {
+            self.postMessage({
+              type: 'ERROR',
+              error: finErr instanceof Error ? finErr.message : 'Error finalizing profile.',
+            } as WorkerErrorResult);
+          }
+        },
+        error: (err) => {
+          activeParser = null;
+          self.postMessage({
+            type: 'ERROR',
+            error: err.message || 'Worker CSV streaming error.',
+          } as WorkerErrorResult);
+        },
       });
-
-      if (!parsed.data || parsed.data.length === 0) {
-        self.postMessage({ type: 'ERROR', error: 'The provided CSV file contains no readable rows.' } as WorkerErrorResult);
-        return;
-      }
-
-      const rawHeaders = parsed.data[0];
-      const rows = parsed.data.slice(1);
-      const delimiter = parsed.meta.delimiter || ',';
-
-      const profile = profileCsvData(fileName, rawHeaders, rows, fileSizeBytes, delimiter);
-      self.postMessage({ type: 'SUCCESS', profile } as WorkerSuccessResult);
     } catch (err) {
+      activeParser = null;
       self.postMessage({
         type: 'ERROR',
-        error: err instanceof Error ? err.message : 'Failed to parse CSV.',
+        error: err instanceof Error ? err.message : 'Failed to start CSV parser worker.',
       } as WorkerErrorResult);
     }
   }
