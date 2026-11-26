@@ -14,8 +14,9 @@ import type { DatasetProfile } from './csv/profiler';
 import { OnboardingModal } from './components/OnboardingModal';
 import { DataPrivacyModal } from './components/DataPrivacyModal';
 import { HybridFlowBanner } from './components/HybridFlowBanner';
+import { TestMatrixTab } from './features/matrix/TestMatrixTab';
 
-type TabKey = 'profile' | 'explain' | 'charts' | 'ask' | 'gate';
+type TabKey = 'profile' | 'explain' | 'charts' | 'ask' | 'gate' | 'matrix';
 
 export default function App() {
   const { user } = useAnonymousAuth();
@@ -206,6 +207,22 @@ export default function App() {
             >
               🔒 Verification Gate
             </button>
+
+            <button
+              role="tab"
+              id="tab-matrix"
+              aria-selected={activeTab === 'matrix'}
+              aria-controls="panel-matrix"
+              type="button"
+              onClick={() => setActiveTab('matrix')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-sky-500 ${
+                activeTab === 'matrix'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              🧪 Test Matrix
+            </button>
           </div>
 
           <div className="flex items-center space-x-2">
@@ -218,7 +235,7 @@ export default function App() {
             </button>
             <span className="text-slate-300 hidden sm:inline">•</span>
             <span className="text-[11px] font-mono text-slate-400 hidden sm:inline">
-              Phase 7 Hardened
+              Phase 8 Matrix
             </span>
           </div>
         </div>
@@ -294,6 +311,13 @@ export default function App() {
           </div>
         )}
 
+        {/* Tab 6: Test Matrix & Network Privacy Inspector */}
+        {activeTab === 'matrix' && (
+          <div id="panel-matrix" role="tabpanel" aria-labelledby="tab-matrix" className="w-full">
+            <TestMatrixTab />
+          </div>
+        )}
+
         {/* Persistent Under The Hood Drawer */}
         <UnderTheHood lastLog={lastLog} />
       </main>
@@ -312,7 +336,7 @@ export default function App() {
       {/* Footer */}
       <footer className="border-t border-slate-200 bg-white py-3.5 px-6 text-center text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">
         <span>
-          Dataveil — Firebase AI Logic Hybrid Inference Hackathon Project • Phase 7 Complete
+          Dataveil — Firebase AI Logic Hybrid Inference Hackathon Project • Phase 8 Complete
         </span>
         <div className="flex items-center space-x-3">
           <button
