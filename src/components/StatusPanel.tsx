@@ -4,9 +4,16 @@ import { checkDeviceModelAvailability, type DeviceModelAvailability } from '../a
 interface StatusPanelProps {
   preferredMode: 'private' | 'auto';
   onToggleMode: () => void;
+  onOpenOnboarding?: () => void;
+  onOpenPrivacy?: () => void;
 }
 
-export function StatusPanel({ preferredMode, onToggleMode }: StatusPanelProps) {
+export function StatusPanel({
+  preferredMode,
+  onToggleMode,
+  onOpenOnboarding,
+  onOpenPrivacy,
+}: StatusPanelProps) {
   const [modelStatus, setModelStatus] = useState<DeviceModelAvailability>('unsupported');
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
 
@@ -31,23 +38,27 @@ export function StatusPanel({ preferredMode, onToggleMode }: StatusPanelProps) {
     switch (modelStatus) {
       case 'available':
         return {
-          text: 'On-device Model: Ready',
-          className: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+          text: 'Gemini Nano: Ready',
+          className: 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-xs shadow-emerald-500/10',
+          dot: 'bg-emerald-500',
         };
       case 'downloadable':
         return {
-          text: 'On-device Model: Downloadable',
-          className: 'bg-amber-50 text-amber-700 border-amber-200',
+          text: 'Gemini Nano: Downloadable',
+          className: 'bg-amber-50 text-amber-800 border-amber-300',
+          dot: 'bg-amber-500',
         };
       case 'downloading':
         return {
-          text: 'On-device Model: Downloading...',
-          className: 'bg-blue-50 text-blue-700 border-blue-200 animate-pulse',
+          text: 'Gemini Nano: Downloading...',
+          className: 'bg-blue-50 text-blue-800 border-blue-300 animate-pulse',
+          dot: 'bg-blue-500',
         };
       default:
         return {
-          text: 'On-device Model: Unavailable / Flag Needed',
-          className: 'bg-slate-100 text-slate-600 border-slate-200',
+          text: 'Gemini Nano: Flag Needed',
+          className: 'bg-slate-100 text-slate-700 border-slate-300',
+          dot: 'bg-slate-400',
         };
     }
   };
@@ -56,16 +67,21 @@ export function StatusPanel({ preferredMode, onToggleMode }: StatusPanelProps) {
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
-      {/* Model Status */}
-      <span
-        className={`inline-flex items-center px-2.5 py-1 rounded-full font-medium border ${badge.className}`}
-        title="Status of Chrome's built-in Gemini Nano model"
+      {/* Model Status Pill with Click to Open Onboarding */}
+      <button
+        type="button"
+        onClick={onOpenOnboarding}
+        title="Click to check or configure Chrome Gemini Nano on-device AI flags"
+        aria-label="Chrome Gemini Nano status. Click to open setup instructions."
+        className={`inline-flex items-center px-2.5 py-1 rounded-full font-medium border transition-transform hover:scale-105 active:scale-95 cursor-pointer ${badge.className}`}
       >
+        <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${badge.dot}`} />
         {badge.text}
-      </span>
+      </button>
 
-      {/* Connectivity */}
+      {/* Connectivity Pill */}
       <span
+        aria-label={`Network status: ${isOnline ? 'Online' : 'Offline'}`}
         className={`inline-flex items-center px-2.5 py-1 rounded-full font-medium border ${
           isOnline
             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -84,11 +100,27 @@ export function StatusPanel({ preferredMode, onToggleMode }: StatusPanelProps) {
       <button
         type="button"
         onClick={onToggleMode}
-        className="inline-flex items-center px-2.5 py-1 rounded-full font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
+        aria-label={`Toggle inference mode. Current mode is ${preferredMode === 'private' ? 'Private' : 'Auto'}`}
+        className="inline-flex items-center px-3 py-1 rounded-full font-medium bg-slate-900 hover:bg-slate-800 text-white border border-slate-800 shadow-xs transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-sky-500"
         title="Toggle between Private (Strict local) and Auto modes"
       >
-        Mode: <span className="font-semibold ml-1">{preferredMode === 'private' ? 'Private (Default)' : 'Auto'}</span>
+        <span>Mode:</span>
+        <span className="font-bold text-sky-300 ml-1">
+          {preferredMode === 'private' ? 'Private (On-Device)' : 'Auto (Hybrid)'}
+        </span>
       </button>
+
+      {/* Privacy Architecture Guide Button */}
+      {onOpenPrivacy && (
+        <button
+          type="button"
+          onClick={onOpenPrivacy}
+          aria-label="Open Data Privacy & Architecture Guide"
+          className="inline-flex items-center px-2.5 py-1 rounded-full font-medium bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 transition-colors cursor-pointer"
+        >
+          🛡️ Privacy Policy
+        </button>
+      )}
     </div>
   );
 }
