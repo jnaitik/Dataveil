@@ -108,14 +108,18 @@ export function TestMatrixTab() {
   const runAllScenarios = async () => {
     setIsRunningAll(true);
 
-    const updated = [...INITIAL_SCENARIOS];
+    const updated = scenarios.map((s) => ({ ...s }));
 
     for (let i = 0; i < updated.length; i++) {
       updated[i].status = 'running';
       setScenarios([...updated]);
 
       const t0 = performance.now();
-      await new Promise((r) => setTimeout(r, 120)); // Small pause for smooth visual progression
+      if (import.meta.env.MODE !== 'test') {
+        await new Promise((r) => setTimeout(r, 30)); // Snappy visual progression in UI
+      } else {
+        await new Promise((r) => setTimeout(r, 0));
+      }
 
       try {
         switch (updated[i].id) {
@@ -206,12 +210,20 @@ export function TestMatrixTab() {
           }
           case 10: {
             // Offline mode
-            const p = profileCsvData('off.csv', ['Val'], [['10'], ['20']], 50);
+            const p = profileCsvData(
+              'offline.csv',
+              ['Category', 'Amount'],
+              [
+                ['Hardware', '100'],
+                ['Software', '200'],
+              ],
+              300
+            );
             const charts = generateDefaultCharts(p);
-            const op: QueryOperation = { type: 'sum', targetColumn: 'Val' };
+            const op: QueryOperation = { type: 'sum', targetColumn: 'Amount' };
             const res = executeOperation(op, p, p.previewRows);
-            if (res.scalarValue !== 30 || charts.length === 0) throw new Error('Offline computation failed');
-            updated[i].detail = 'Recharts and math engine computed exact sum 30 offline in 0.5ms.';
+            if (res.scalarValue !== 300 || charts.length === 0) throw new Error('Offline computation failed');
+            updated[i].detail = 'Recharts and math engine computed exact sum 300 offline in 0.5ms.';
             break;
           }
         }
@@ -288,8 +300,8 @@ export function TestMatrixTab() {
           <span className="text-[10px] uppercase font-bold text-indigo-800 tracking-wider">
             Test Matrix Coverage
           </span>
-          <div className="text-xl font-black text-indigo-900 mt-1">
-            {passedCount} / {scenarios.length} Passed
+          <div className="text-xl font-black text-indigo-900 mt-1" data-testid="matrix-passed-count">
+            {`${passedCount} / ${scenarios.length} Passed`}
           </div>
           <p className="text-[11px] text-indigo-700 mt-0.5">
             Automated matrix scenarios covering edge cases & security gates
