@@ -234,23 +234,11 @@ OUTPUT FORMAT: Return ONLY the JSON object. No explanation.`;
     setSource(null);
   };
 
-  const numCols = profile.columns.filter((c) => c.type === 'number').map((c) => c.name);
-  const catCols = profile.columns.filter((c) => c.type === 'text' || c.type === 'boolean').map((c) => c.name);
-
-  const sampleQuestions: string[] = ['Count of records'];
-  if (numCols.length > 0) {
-    sampleQuestions.push(`What is the average ${numCols[0]}?`);
-    sampleQuestions.push(`What is the total ${numCols[0]}?`);
-    if (numCols.length > 1) {
-      sampleQuestions.push(`What is the highest ${numCols[1]}?`);
-    }
-  }
-  if (catCols.length > 0) {
-    sampleQuestions.push(`Count of records by ${catCols[0]}`);
-    if (numCols.length > 0) {
-      sampleQuestions.push(`Total ${numCols[0]} grouped by ${catCols[0]}`);
-    }
-  }
+  const sampleQuestions = [
+    'Count of records',
+    'What is the total sum?',
+    'What is the average value?',
+  ];
 
   return (
     <div className="w-full space-y-6 text-left" role="tabpanel" aria-label="Ask Questions Module">

@@ -6,7 +6,7 @@
 [![React 19](https://img.shields.io/badge/React-19.0-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-8.3-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
-[![Vitest](https://img.shields.io/badge/Tests-60%20Passed-10B981?logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Tests-53%20Passed-10B981?logo=vitest&logoColor=white)](https://vitest.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > Built for the **Google Firebase #BuildHybridAI Hackathon 2026**  
@@ -16,7 +16,7 @@
 
 ## 🌟 Overview
 
-**Dataveil** is a privacy-first web application for exploring and understanding CSV data up to **500 MB (~500,000+ rows)** without exposing sensitive records to external cloud servers.
+**Dataveil** is an enterprise-grade, privacy-first web application for exploring and understanding CSV data up to **50 MB (~500,000 rows)** without exposing sensitive enterprise records to external cloud servers.
 
 By coupling a **client-side Web Worker** for streaming chunk parsing and deterministic statistical math with **Chrome's built-in Gemini Nano (`firebase/ai` on-device)**, Dataveil guarantees that:
 1. **Zero raw CSV data rows or cell records** ever reach an AI model or cloud server.
@@ -34,7 +34,7 @@ By coupling a **client-side Web Worker** for streaming chunk parsing and determi
 │                                                                        │
 │   ┌───────────────────┐               ┌────────────────────────────┐   │
 │   │   User Upload     │               │     Web Worker Engine      │   │
-│   │(CSV up to 500 MB) │ ────────────> │  • PapaParse chunk stream  │   │
+│   │ (CSV up to 50 MB) │ ────────────> │  • PapaParse chunk stream  │   │
 │   └───────────────────┘               │  • Type inference (5 types)│   │
 │                                       │  • Deterministic IQR stats │   │
 │                                       └──────────────┬─────────────┘   │

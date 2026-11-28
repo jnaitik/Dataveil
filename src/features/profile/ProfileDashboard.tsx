@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { DatasetProfile, ColumnProfile } from '../../csv/profiler';
 import { generateDefaultCharts } from '../../csv/chartSpecs';
 import { ChartCard } from '../../components/ChartCard';
+import { FindingsSection } from './FindingsSection';
 
 interface ProfileDashboardProps {
   profile: DatasetProfile;
@@ -34,6 +35,8 @@ export function ProfileDashboard({ profile, onReset }: ProfileDashboardProps) {
     }
   };
 
+  const mbSize = (profile.fileSizeBytes / (1024 * 1024)).toFixed(2);
+
   return (
     <div className="w-full space-y-6 text-left">
       {/* File Header Bar */}
@@ -44,9 +47,15 @@ export function ProfileDashboard({ profile, onReset }: ProfileDashboardProps) {
             <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium border border-emerald-200">
               Parsed Locally (No AI)
             </span>
+            {profile.isStreamingProfile && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 font-semibold border border-sky-200">
+                Bounded O(1) Memory
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            {(profile.fileSizeBytes / 1024).toFixed(1)} KB • Delimiter: &quot;{profile.delimiter}&quot;
+            {mbSize} MB • Delimiter: &quot;{profile.delimiter}&quot;
+            {profile.raggedRowCount ? ` • Ragged Rows: ${profile.raggedRowCount}` : ''}
           </p>
         </div>
 
@@ -73,7 +82,10 @@ export function ProfileDashboard({ profile, onReset }: ProfileDashboardProps) {
           <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Duplicate Rows</span>
           <div className="text-2xl font-bold text-slate-900 mt-1">
             {profile.duplicateRowCount > 0 ? (
-              <span className="text-amber-600">{profile.duplicateRowCount}</span>
+              <span className="text-amber-600" title="Estimated via HyperLogLog hash sketch">
+                {profile.duplicateRowCountExact === false ? '≈ ' : ''}
+                {profile.duplicateRowCount.toLocaleString()}
+              </span>
             ) : (
               <span className="text-slate-900">0</span>
             )}
@@ -82,10 +94,13 @@ export function ProfileDashboard({ profile, onReset }: ProfileDashboardProps) {
         <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-2xs">
           <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Data Quality</span>
           <div className="text-2xl font-bold text-emerald-600 mt-1">
-            {profile.warnings.length === 0 ? '100% Clean' : 'Flags Reported'}
+            {profile.warnings.length === 0 ? '100% Clean' : `${profile.warnings.length} Warnings`}
           </div>
         </div>
       </div>
+
+      {/* Deterministic Findings Engine (Anomaly detection with row evidence) */}
+      <FindingsSection findings={profile.findings || []} profile={profile} />
 
       {/* Deterministic Default Charts Section (Zero AI required) */}
       {defaultCharts.length > 0 && (
@@ -105,8 +120,13 @@ export function ProfileDashboard({ profile, onReset }: ProfileDashboardProps) {
       {/* Column Schema & Statistics Table */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
         <div className="p-4 border-b border-slate-200 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-900">Column Profiles & Statistical Summaries</h3>
-          <span className="text-xs text-slate-500">{profile.columns.length} columns inspected</span>
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Column Profiles & Statistical Summaries</h3>
+            <span className="text-[11px] text-slate-500">
+              Note: Exact (count, sum, min, max, mean). Approximate (≈ median/IQR via P² sketch, unique via HyperLogLog).
+            </span>
+          </div>
+          <span className="text-xs text-slate-500 font-mono">{profile.columns.length} columns inspected</span>
         </div>
 
         <div className="overflow-x-auto">
@@ -150,17 +170,24 @@ export function ProfileDashboard({ profile, onReset }: ProfileDashboardProps) {
                       '0 (0%)'
                     )}
                   </td>
-                  <td className="py-3 px-4 text-slate-600">{col.uniqueCount}</td>
+                  <td className="py-3 px-4 text-slate-600">
+                    <span title={col.uniqueCountExact === false ? 'Approximate distinct count (HyperLogLog sketch)' : 'Exact count'}>
+                      {col.uniqueCountExact === false ? '≈ ' : ''}
+                      {col.uniqueCount.toLocaleString()}
+                    </span>
+                  </td>
                   <td className="py-3 px-4 text-slate-700 font-sans text-xs">
                     {col.numericStats ? (
                       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-mono">
                         <span>Min: {col.numericStats.min}</span>
                         <span>Max: {col.numericStats.max}</span>
                         <span>Mean: {col.numericStats.mean}</span>
-                        <span>Median: {col.numericStats.median}</span>
+                        <span title={col.numericStats.exact?.median === false ? 'P² Dynamic Quantile Estimate' : 'Exact median'}>
+                          Median: {col.numericStats.exact?.median === false ? '≈ ' : ''}{col.numericStats.median}
+                        </span>
                         {col.numericStats.outliersCount > 0 && (
-                          <span className="text-amber-700 font-semibold">
-                            IQR Outliers: {col.numericStats.outliersCount}
+                          <span className="text-amber-700 font-semibold" title="Tukey IQR outlier estimate">
+                            IQR Outliers: {col.numericStats.exact?.outliersCount === false ? '≈ ' : ''}{col.numericStats.outliersCount}
                           </span>
                         )}
                       </div>
@@ -181,13 +208,18 @@ export function ProfileDashboard({ profile, onReset }: ProfileDashboardProps) {
         </div>
       </div>
 
-      {/* CSV Data Preview Table (First 50 Rows, Paginated) */}
+      {/* CSV Data Preview Table (Reservoir Sample Max 50 Rows, Paginated) */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
-        <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 className="text-sm font-bold text-slate-900">Local Data Preview</h3>
-            <p className="text-[11px] text-slate-500">
-              Showing rows {startIndex + 1}–{Math.min(startIndex + rowsPerPage, totalPreviewRows)} of {totalPreviewRows} previewed rows (max 50)
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-slate-900">Local Data Preview</h3>
+              <span className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
+                Reservoir Sample (max 50 rows) • Never part of AI payload
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Showing rows {startIndex + 1}–{Math.min(startIndex + rowsPerPage, totalPreviewRows)} of {totalPreviewRows} previewed rows (max 50 reservoir sample from total {profile.rowCount.toLocaleString()} rows)
             </p>
           </div>
 

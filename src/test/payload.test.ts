@@ -47,4 +47,24 @@ describe('Phase 6 Privacy Contract: buildAiPayload', () => {
     expect(payload).not.toContain('Column: "Score"');
     expect(payload).toContain('Column: "Age"');
   });
+
+  it('includes deterministic findings codes and counts in payload with zero raw rows', () => {
+    const testHeaders = ['transaction_id', 'amount'];
+    const testRows = [
+      ['TX_SECRET_999', '100'],
+      ['TX_SECRET_999', '-50'], // duplicate key + negative amount
+      ['TX_SECRET_888', '200'],
+    ];
+    const testProfile = profileCsvData('test.csv', testHeaders, testRows, 50);
+    const payload = buildAiPayload(testProfile);
+
+    // Verify findings section is present
+    expect(payload).toContain('Deterministic Findings Detected');
+    expect(payload).toContain('PRIMARY_KEY_DUPLICATES');
+    expect(payload).toContain('NEGATIVE_VALUES_IN_COUNT');
+
+    // Verify ZERO raw row cells are leaked from the findings
+    expect(payload).not.toContain('TX_SECRET_999');
+    expect(payload).not.toContain('TX_SECRET_888');
+  });
 });

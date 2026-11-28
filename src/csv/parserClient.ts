@@ -1,34 +1,29 @@
 import Papa from 'papaparse';
-import { IncrementalProfiler, type DatasetProfile } from './profiler';
-import type { WorkerOutgoingMessage, WorkerParseMessage } from './parser.worker';
+import { profileCsvData, type DatasetProfile } from './profiler';
+import { streamAndProfileCsv, type StreamingProgress } from './streamingProfiler';
+import type { WorkerInMessage, WorkerOutMessage } from './parser.worker';
 
-export interface ParseProgress {
-  rowsProcessed: number;
-  percent: number;
+export type { StreamingProgress };
+
+export interface StreamingParseHandle {
+  promise: Promise<DatasetProfile>;
+  cancel: () => void;
 }
 
-export interface ParseOptions {
-  onProgress?: (progress: ParseProgress) => void;
-  signal?: AbortSignal;
-}
-
-export function parseAndProfileCsv(
-  csvInput: string | File,
+/**
+ * Streaming parser client with Web Worker offloading, throttled progress updates,
+ * and immediate cancellation capability. Handles up to 500 MB without holding all rows in memory.
+ */
+export function parseAndProfileStream(
+  input: File | Blob | string,
   fileName: string,
   fileSizeBytes: number,
-  optionsOrProgress?: ParseOptions | ((progress: ParseProgress) => void),
-  abortSignal?: AbortSignal
-): Promise<DatasetProfile> {
-  const options: ParseOptions =
-    typeof optionsOrProgress === 'function'
-      ? { onProgress: optionsOrProgress, signal: abortSignal }
-      : optionsOrProgress || { signal: abortSignal };
+  onProgress?: (progress: StreamingProgress) => void
+): StreamingParseHandle {
+  let isCompleted = false;
+  let cancelFn = () => {};
 
-  return new Promise((resolve, reject) => {
-    if (options.signal?.aborted) {
-      return reject(new Error('CSV parsing was cancelled by user.'));
-    }
-
+  const promise = new Promise<DatasetProfile>((resolve, reject) => {
     // If Web Worker is supported in browser, offload to worker
     if (typeof window !== 'undefined' && typeof window.Worker !== 'undefined') {
       try {
@@ -36,131 +31,170 @@ export function parseAndProfileCsv(
           type: 'module',
         });
 
-        const abortHandler = () => {
-          worker.postMessage({ type: 'ABORT' });
-          worker.terminate();
-          reject(new Error('CSV parsing was cancelled by user.'));
+        cancelFn = () => {
+          if (!isCompleted) {
+            isCompleted = true;
+            try {
+              worker.postMessage({ type: 'ABORT' } as WorkerInMessage);
+              worker.terminate();
+            } catch {
+              // ignore
+            }
+            reject(new DOMException('Parsing cancelled by user', 'AbortError'));
+          }
         };
 
-        if (options.signal) {
-          options.signal.addEventListener('abort', abortHandler, { once: true });
-        }
-
-        worker.onmessage = (event: MessageEvent<WorkerOutgoingMessage>) => {
+        worker.onmessage = (event: MessageEvent<WorkerOutMessage>) => {
           const data = event.data;
           if (data.type === 'PROGRESS') {
-            options.onProgress?.({
-              rowsProcessed: data.rowsProcessed,
-              percent: data.percent,
-            });
+            onProgress?.(data.progress);
           } else if (data.type === 'SUCCESS') {
-            if (options.signal) {
-              options.signal.removeEventListener('abort', abortHandler);
-            }
+            isCompleted = true;
             worker.terminate();
             resolve(data.profile);
           } else if (data.type === 'ERROR') {
-            if (options.signal) {
-              options.signal.removeEventListener('abort', abortHandler);
-            }
+            isCompleted = true;
             worker.terminate();
             reject(new Error(data.error));
           }
         };
 
         worker.onerror = () => {
-          if (options.signal) {
-            options.signal.removeEventListener('abort', abortHandler);
+          if (!isCompleted) {
+            isCompleted = true;
+            worker.terminate();
+            // Fall back to main thread streaming
+            fallbackMainThreadStreaming(input, fileName, fileSizeBytes, onProgress)
+              .then(resolve)
+              .catch(reject);
           }
-          worker.terminate();
-          // Fall back to main thread streaming on worker error
-          fallbackMainThread(csvInput, fileName, fileSizeBytes, options)
-            .then(resolve)
-            .catch(reject);
         };
 
-        const msg: WorkerParseMessage = {
-          type: 'PARSE',
+        // If input is string, convert to Blob for consistent streaming transfer if needed
+        const payloadFile = typeof input === 'string' ? new Blob([input], { type: 'text/csv' }) : input;
+
+        worker.postMessage({
+          type: 'PARSE_STREAM',
+          file: payloadFile,
           fileName,
           fileSizeBytes,
-        };
-
-        if (typeof csvInput === 'string') {
-          msg.csvString = csvInput;
-        } else {
-          msg.file = csvInput;
-        }
-
-        worker.postMessage(msg);
+        } as WorkerInMessage);
         return;
       } catch {
-        // Fall back to main thread streaming
+        // Fall back to main thread
       }
     }
 
-    fallbackMainThread(csvInput, fileName, fileSizeBytes, options).then(resolve).catch(reject);
+    // Main thread / jsdom fallback
+    const abortCtrl = new AbortController();
+    cancelFn = () => {
+      if (!isCompleted) {
+        isCompleted = true;
+        abortCtrl.abort();
+        reject(new DOMException('Parsing cancelled by user', 'AbortError'));
+      }
+    };
+
+    fallbackMainThreadStreaming(input, fileName, fileSizeBytes, onProgress, abortCtrl.signal)
+      .then((p) => {
+        isCompleted = true;
+        resolve(p);
+      })
+      .catch((err) => {
+        isCompleted = true;
+        reject(err);
+      });
+  });
+
+  return {
+    promise,
+    cancel: cancelFn,
+  };
+}
+
+async function fallbackMainThreadStreaming(
+  input: File | Blob | string,
+  fileName: string,
+  fileSizeBytes: number,
+  onProgress?: (progress: StreamingProgress) => void,
+  abortSignal?: AbortSignal
+): Promise<DatasetProfile> {
+  return streamAndProfileCsv(input, {
+    fileName,
+    fileSizeBytes,
+    onProgress,
+    abortSignal,
   });
 }
 
 /**
- * Fallback main thread streaming parser (used in testing or if workers are blocked).
- * Uses chunking to prevent memory bloat.
+ * Legacy in-memory CSV parsing interface (for tests and string fixtures)
  */
-async function fallbackMainThread(
-  csvInput: string | File,
+export function parseAndProfileCsv(
+  csvString: string,
   fileName: string,
-  fileSizeBytes: number,
-  options: ParseOptions
+  fileSizeBytes: number
 ): Promise<DatasetProfile> {
   return new Promise((resolve, reject) => {
-    const profiler = new IncrementalProfiler(fileName, fileSizeBytes);
-    let totalRows = 0;
+    // If Web Worker is supported in browser, offload to worker
+    if (typeof window !== 'undefined' && typeof window.Worker !== 'undefined') {
+      try {
+        const worker = new Worker(new URL('./parser.worker.ts', import.meta.url), {
+          type: 'module',
+        });
 
-    let input = csvInput;
-    if (typeof input === 'string') {
-      input = input.replace(/^\uFEFF/, '');
-      if (input.trim() === '') {
-        return reject(new Error('The provided CSV file contains no readable rows.'));
+        worker.onmessage = (event: MessageEvent<WorkerOutMessage>) => {
+          worker.terminate();
+          if (event.data.type === 'SUCCESS') {
+            resolve(event.data.profile);
+          } else if (event.data.type === 'ERROR') {
+            reject(new Error(event.data.error));
+          }
+        };
+
+        worker.onerror = () => {
+          worker.terminate();
+          fallbackMainThread(csvString, fileName, fileSizeBytes)
+            .then(resolve)
+            .catch(reject);
+        };
+
+        const msg: WorkerInMessage = {
+          type: 'PARSE',
+          csvString,
+          fileName,
+          fileSizeBytes,
+        };
+        worker.postMessage(msg);
+        return;
+      } catch {
+        // Fall back to main thread
       }
     }
 
-    Papa.parse<string[]>(input as any, {
-      chunkSize: 1024 * 1024 * 4,
-      skipEmptyLines: 'greedy',
-      dynamicTyping: false,
-      chunk: (results, parser) => {
-        if (results.meta?.delimiter) {
-          profiler.setDelimiter(results.meta.delimiter);
-        }
-
-        if (options.signal?.aborted) {
-          parser.abort();
-          return reject(new Error('CSV parsing was cancelled by user.'));
-        }
-
-        if (results.data && results.data.length > 0) {
-          profiler.addRows(results.data);
-          totalRows += results.data.length;
-          options.onProgress?.({
-            rowsProcessed: totalRows,
-            percent: Math.min(99, Math.round((totalRows / 50000) * 100)),
-          });
-        }
-      },
-      complete: () => {
-        try {
-          const profile = profiler.finalize();
-          if (profile.columnCount === 0) {
-            return reject(new Error('The provided CSV file contains no readable rows.'));
-          }
-          resolve(profile);
-        } catch (err) {
-          reject(err);
-        }
-      },
-      error: (err) => {
-        reject(new Error(err.message || 'Main thread parsing error.'));
-      },
-    });
+    fallbackMainThread(csvString, fileName, fileSizeBytes).then(resolve).catch(reject);
   });
+}
+
+async function fallbackMainThread(
+  csvString: string,
+  fileName: string,
+  fileSizeBytes: number
+): Promise<DatasetProfile> {
+  const cleanCsv = csvString.replace(/^\uFEFF/, '');
+  const parsed = Papa.parse<string[]>(cleanCsv, {
+    header: false,
+    skipEmptyLines: 'greedy',
+    dynamicTyping: false,
+  });
+
+  if (!parsed.data || parsed.data.length === 0) {
+    throw new Error('The provided CSV file contains no readable rows.');
+  }
+
+  const rawHeaders = parsed.data[0];
+  const rows = parsed.data.slice(1);
+  const delimiter = parsed.meta.delimiter || ',';
+
+  return profileCsvData(fileName, rawHeaders, rows, fileSizeBytes, delimiter);
 }

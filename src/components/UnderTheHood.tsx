@@ -6,6 +6,9 @@ export interface InferenceLogEntry {
   latencyMs: number;
   payloadChars: number;
   timestamp: string;
+  sanitizedPayload?: string;
+  consentGranted?: boolean;
+  tokensUsed?: number;
 }
 
 interface UnderTheHoodProps {

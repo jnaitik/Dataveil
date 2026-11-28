@@ -40,7 +40,8 @@ export function buildAiPayload(profile: DatasetProfile, options: PayloadOptions 
   payload += `File: ${profile.fileName}\n`;
   payload += `Total Rows: ${profile.rowCount}\n`;
   payload += `Total Columns: ${profile.columnCount}\n`;
-  payload += `Duplicate Rows: ${profile.duplicateRowCount}\n`;
+  const dupLabel = profile.duplicateRowCountExact === false ? `≈ ${profile.duplicateRowCount} (approx)` : `${profile.duplicateRowCount}`;
+  payload += `Duplicate Rows: ${dupLabel}\n`;
 
   if (excludedColNames.length > 0) {
     payload += `Excluded Columns (Not shared for privacy): ${excludedColNames.join(', ')}\n`;
@@ -52,10 +53,13 @@ export function buildAiPayload(profile: DatasetProfile, options: PayloadOptions 
     payload += `\n- Column: "${col.name}"\n`;
     payload += `  Type: ${col.type.toUpperCase()}\n`;
     payload += `  Missing Count: ${col.missingCount} (${col.missingPercentage}%)\n`;
-    payload += `  Unique Count: ${col.uniqueCount}\n`;
+    const uniqueLabel = col.uniqueCountExact === false ? `≈ ${col.uniqueCount} (approx)` : `${col.uniqueCount}`;
+    payload += `  Unique Count: ${uniqueLabel}\n`;
 
     if (col.numericStats) {
-      payload += `  Stats: min=${col.numericStats.min}, max=${col.numericStats.max}, mean=${col.numericStats.mean}, median=${col.numericStats.median}, outliers_iqr=${col.numericStats.outliersCount}\n`;
+      const medLabel = col.numericStats.exact?.median === false ? `≈ ${col.numericStats.median} (approx)` : `${col.numericStats.median}`;
+      const outLabel = col.numericStats.exact?.outliersCount === false ? `≈ ${col.numericStats.outliersCount} (approx)` : `${col.numericStats.outliersCount}`;
+      payload += `  Stats: min=${col.numericStats.min}, max=${col.numericStats.max}, mean=${col.numericStats.mean}, median=${medLabel}, outliers_iqr=${outLabel}\n`;
     }
 
     if (includeTopValues && col.topCategories && col.topCategories.length > 0) {
@@ -64,6 +68,14 @@ export function buildAiPayload(profile: DatasetProfile, options: PayloadOptions 
         .map((c) => `"${c.value}": ${c.count} (${c.percentage}%)`)
         .join(', ');
       payload += `  Top Frequencies: ${topStr}\n`;
+    }
+  }
+
+  if (profile.findings && profile.findings.length > 0) {
+    payload += `\nDeterministic Findings Detected (${profile.findings.length}):\n`;
+    for (const f of profile.findings) {
+      const approxStr = f.approximate ? ' (approx)' : '';
+      payload += `- [${f.severity.toUpperCase()}] ${f.code}: ${f.title} (Count: ${f.count}${approxStr})\n`;
     }
   }
 

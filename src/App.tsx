@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAnonymousAuth } from './store/auth';
 import { getUserPreferences, saveUserPreferences, type UserPreferences } from './store/preferences';
 import { StatusPanel } from './components/StatusPanel';
@@ -9,15 +9,17 @@ import { ProfileDashboard } from './features/profile/ProfileDashboard';
 import { ExplainTab } from './features/explain/ExplainTab';
 import { SuggestedChartsTab } from './features/charts/SuggestedChartsTab';
 import { AskTab } from './features/ask/AskTab';
-import { parseAndProfileCsv } from './csv/parserClient';
+import { parseAndProfileCsv, parseAndProfileStream, type StreamingProgress, type StreamingParseHandle } from './csv/parserClient';
 import type { DatasetProfile } from './csv/profiler';
 import { OnboardingModal } from './components/OnboardingModal';
 import { DataPrivacyModal } from './components/DataPrivacyModal';
 import { HybridFlowBanner } from './components/HybridFlowBanner';
 import { TestMatrixTab } from './features/matrix/TestMatrixTab';
-import { PrivacyInspectorTab } from './features/privacy/PrivacyInspectorTab';
+import { PrivacyReceiptTab } from './features/privacy/PrivacyReceiptTab';
+import { initNetworkLedger, setParsingState, setConsentGranted } from './lib/networkLedger';
+import { logAiRequest } from './lib/privacyReceipt';
 
-type TabKey = 'profile' | 'explain' | 'charts' | 'ask' | 'privacy' | 'gate' | 'matrix';
+type TabKey = 'profile' | 'explain' | 'charts' | 'ask' | 'receipt' | 'gate' | 'matrix';
 
 export default function App() {
   const { user } = useAnonymousAuth();
@@ -30,15 +32,19 @@ export default function App() {
 
   // Profile and CSV State
   const [profile, setProfile] = useState<DatasetProfile | null>(null);
+  const [_currentFile, setCurrentFile] = useState<File | Blob | string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
-  const [parseProgress, setParseProgress] = useState<{ rowsProcessed: number; percent: number } | null>(null);
+  const [progress, setProgress] = useState<StreamingProgress | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('profile');
+  const parseHandleRef = useRef<StreamingParseHandle | null>(null);
 
   // Modals
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
 
   useEffect(() => {
+    initNetworkLedger();
+
     getUserPreferences(user?.uid).then((p) => {
       setPrefs(p);
     });
@@ -58,26 +64,79 @@ export default function App() {
     saveUserPreferences(user?.uid, { preferredMode: nextMode });
   };
 
-  const handleLoadCsv = async (fileOrContent: File | string, fileName: string, fileSizeBytes: number) => {
+  const handleLogUpdate = (entry: InferenceLogEntry | null) => {
+    setLastLog(entry);
+    if (entry) {
+      logAiRequest({
+        modeRequested: entry.modeRequested,
+        realInferenceSource: entry.sourceReturned === 'ON_DEVICE' ? 'on-device' : 'cloud',
+        consentGiven: entry.consentGranted ?? (entry.sourceReturned === 'IN_CLOUD'),
+        payloadText: entry.sanitizedPayload || `[Sanitized Schema Summary (${entry.payloadChars} chars)]`,
+        latencyMs: entry.latencyMs,
+        tokensUsed: entry.tokensUsed,
+      });
+      if (entry.consentGranted || entry.sourceReturned === 'IN_CLOUD') {
+        setConsentGranted(true);
+      }
+    }
+  };
+
+  const handleLoadFile = (file: File) => {
     setIsParsing(true);
-    setParseProgress(null);
+    setParsingState(true);
+    setProgress(null);
+    setCurrentFile(file);
+
+    const handle = parseAndProfileStream(file, file.name, file.size, (prog) => {
+      setProgress(prog);
+    });
+    parseHandleRef.current = handle;
+
+    handle.promise
+      .then((result) => {
+        setProfile(result);
+        setActiveTab('profile');
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          return;
+        }
+        alert(err instanceof Error ? err.message : 'Error profiling CSV.');
+      })
+      .finally(() => {
+        setIsParsing(false);
+        setParsingState(false);
+        setProgress(null);
+        parseHandleRef.current = null;
+      });
+  };
+
+  const handleCancelParse = () => {
+    if (parseHandleRef.current) {
+      parseHandleRef.current.cancel();
+      parseHandleRef.current = null;
+    }
+    setIsParsing(false);
+    setParsingState(false);
+    setProgress(null);
+  };
+
+  const handleLoadCsv = async (csvContent: string, fileName: string, fileSizeBytes: number) => {
+    setIsParsing(true);
+    setParsingState(true);
+    setProgress(null);
+    setCurrentFile(csvContent);
 
     try {
-      const result = await parseAndProfileCsv(
-        fileOrContent,
-        fileName,
-        fileSizeBytes,
-        {
-          onProgress: (p) => setParseProgress(p),
-        }
-      );
+      const result = await parseAndProfileCsv(csvContent, fileName, fileSizeBytes);
       setProfile(result);
       setActiveTab('profile');
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error profiling CSV.');
     } finally {
       setIsParsing(false);
-      setParseProgress(null);
+      setParsingState(false);
+      setProgress(null);
     }
   };
 
@@ -206,22 +265,6 @@ export default function App() {
 
             <button
               role="tab"
-              id="tab-privacy"
-              aria-selected={activeTab === 'privacy'}
-              aria-controls="panel-privacy"
-              type="button"
-              onClick={() => setActiveTab('privacy')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-sky-500 ${
-                activeTab === 'privacy'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-              }`}
-            >
-              🛡️ Privacy Inspector
-            </button>
-
-            <button
-              role="tab"
               id="tab-gate"
               aria-selected={activeTab === 'gate'}
               aria-controls="panel-gate"
@@ -251,6 +294,22 @@ export default function App() {
             >
               🧪 Test Matrix
             </button>
+
+            <button
+              role="tab"
+              id="tab-receipt"
+              aria-selected={activeTab === 'receipt'}
+              aria-controls="panel-receipt"
+              type="button"
+              onClick={() => setActiveTab('receipt')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-sky-500 ${
+                activeTab === 'receipt'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              🧾 Privacy Receipt & Ledger
+            </button>
           </div>
 
           <div className="flex items-center space-x-2">
@@ -278,15 +337,16 @@ export default function App() {
                     Local CSV Profile & Analysis
                   </h2>
                   <p className="text-xs text-slate-600 leading-relaxed">
-                    Upload your CSV (up to 50 MB / 500k rows) or click any synthetic dataset below. Inferred data types, outlier detection (IQR),
+                    Upload your CSV (single-pass streaming up to 500 MB) or click any synthetic dataset below. Inferred data types, outlier detection (IQR),
                     missing values, duplicate counts, and default charts are computed 100% locally in a Web Worker with zero AI.
                   </p>
                 </div>
                 <DropZone
+                  onLoadFile={handleLoadFile}
                   onLoadCsv={handleLoadCsv}
                   isLoading={isParsing}
-                  onCancel={() => setIsParsing(false)}
-                  progress={parseProgress}
+                  progress={progress}
+                  onCancel={handleCancelParse}
                 />
               </div>
             ) : (
@@ -301,7 +361,7 @@ export default function App() {
             <ExplainTab
               profile={profile}
               preferredMode={prefs.preferredMode}
-              onLogUpdate={setLastLog}
+              onLogUpdate={handleLogUpdate}
             />
           </div>
         )}
@@ -312,7 +372,7 @@ export default function App() {
             <SuggestedChartsTab
               profile={profile}
               preferredMode={prefs.preferredMode}
-              onLogUpdate={setLastLog}
+              onLogUpdate={handleLogUpdate}
             />
           </div>
         )}
@@ -323,22 +383,12 @@ export default function App() {
             <AskTab
               profile={profile}
               preferredMode={prefs.preferredMode}
-              onLogUpdate={setLastLog}
+              onLogUpdate={handleLogUpdate}
             />
           </div>
         )}
 
-        {/* Tab 5: Dedicated Privacy Inspector */}
-        {activeTab === 'privacy' && (
-          <div id="panel-privacy" role="tabpanel" aria-labelledby="tab-privacy" className="w-full">
-            <PrivacyInspectorTab
-              profile={profile}
-              preferredMode={prefs.preferredMode}
-            />
-          </div>
-        )}
-
-        {/* Tab 6: Verification Gate */}
+        {/* Tab 5: Verification Gate */}
         {activeTab === 'gate' && (
           <div id="panel-gate" role="tabpanel" aria-labelledby="tab-gate" className="w-full flex flex-col items-center space-y-6">
             <div className="max-w-2xl text-center space-y-2">
@@ -350,7 +400,7 @@ export default function App() {
                 and review real SDK provenance and latency.
               </p>
             </div>
-            <GateTestHarness preferredMode={prefs.preferredMode} onLogUpdate={setLastLog} />
+            <GateTestHarness preferredMode={prefs.preferredMode} onLogUpdate={handleLogUpdate} />
           </div>
         )}
 
@@ -358,6 +408,13 @@ export default function App() {
         {activeTab === 'matrix' && (
           <div id="panel-matrix" role="tabpanel" aria-labelledby="tab-matrix" className="w-full">
             <TestMatrixTab />
+          </div>
+        )}
+
+        {/* Tab 7: Privacy Receipt & Ledger */}
+        {activeTab === 'receipt' && (
+          <div id="panel-receipt" role="tabpanel" aria-labelledby="tab-receipt" className="w-full">
+            <PrivacyReceiptTab profile={profile} />
           </div>
         )}
 
